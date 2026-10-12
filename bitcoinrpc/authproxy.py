@@ -149,7 +149,7 @@ class AuthServiceProxy(object):
     def batch_(self, rpc_calls):
         """Batch RPC call.
            Pass array of arrays: [ [ "method", params... ], ... ]
-           Returns array of results.
+           Returns array of results in the same order as rpc_calls.
         """
         batch_data = []
         for rpc_call in rpc_calls:
@@ -164,7 +164,8 @@ class AuthServiceProxy(object):
                              'User-Agent': USER_AGENT,
                              'Authorization': self.__auth_header,
                              'Content-type': 'application/json'})
-        results = []
+        results = {}
+        expected_ids = set(call['id'] for call in batch_data)
         responses = self._get_response()
         if isinstance(responses, (dict,)):
             if ('error' in responses) and (responses['error'] is not None):
@@ -178,8 +179,20 @@ class AuthServiceProxy(object):
                 raise JSONRPCException({
                     'code': -343, 'message': 'missing JSON-RPC result'})
             else:
-                results.append(response['result'])
-        return results
+                response_id = response.get('id')
+                try:
+                    expected = response_id in expected_ids
+                    duplicate = response_id in results
+                except TypeError:
+                    expected, duplicate = False, False
+                if not expected or duplicate:
+                    raise JSONRPCException({
+                        'code': -343, 'message': 'invalid JSON-RPC batch response id'})
+                results[response_id] = response['result']
+        if len(results) != len(expected_ids):
+            raise JSONRPCException({
+                'code': -343, 'message': 'missing JSON-RPC batch response'})
+        return [results[call['id']] for call in batch_data]
 
     def _get_response(self):
         http_response = self.__conn.getresponse()
